@@ -1,9 +1,5 @@
-import { StyleSheet, useWindowDimensions } from "react-native"
+import { StyleSheet } from "react-native"
 
-const { width } = useWindowDimensions()
-    const isMobile = width < 768
-    const isTablet = width >= 768 && width < 1024
-    const isDesktop = width >= 1024
 
 
 const styles = StyleSheet.create({
