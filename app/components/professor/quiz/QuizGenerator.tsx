@@ -9,6 +9,7 @@ import styles from "@/app/styles/QuizGenerator.style"
 import { APP_CONFIG } from "@/app-config"
 
 const API_PDF_QUIZ_URL = APP_CONFIG.API_PDF_QUIZ_URL
+const API_TEXT_QUIZ_URL = APP_CONFIG.API_TEXT_QUIZ_URL
 
 interface QuizQuestion {
     question: string
@@ -165,7 +166,7 @@ const QuizGenerator: React.FC<QuizGeneratorProps> = ({ onQuizGenerated }) => {
         setIsLoading(true)
 
         try {
-            const response = await fetch(`${API_PDF_QUIZ_URL}/text_to_quizz/`, {
+            const response = await fetch(`${API_TEXT_QUIZ_URL}/text_to_quizz/`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
