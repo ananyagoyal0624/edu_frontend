@@ -13,6 +13,7 @@ import {
     ActivityIndicator,
     Alert,
     useWindowDimensions,
+    Linking,
 } from "react-native"
 import { Ionicons, FontAwesome, MaterialIcons, AntDesign, Feather } from "@expo/vector-icons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
@@ -20,16 +21,15 @@ import NetInfo from "@react-native-community/netinfo"
 import { AuthContext } from "../context/AuthContext"
 import styles from "../styles/ProfessorDashboard.style"
 import { useRouter } from "expo-router"
-import FileManagement from "./professor/FileManagement"
 import QuizTab from "./professor/quiz/QuizTab"
 import { useToken } from "../hooks/useToken"
 import { APP_CONFIG } from "@/app-config"
 import StudentsList from "./professor/StudentsList"
 import { AttendanceChart, GradeDistributionChart, AssignmentCompletionChart } from "./professor/ChartComponents"
-import CourseList from "./professor/CourseList"
 import AssignmentList from "./professor/assignment/AssignmentList"
 import AssignmentModal from "./professor/assignment/AssignmentModal"
 import AttendanceManagement from "./professor/attendance/AttendanceManagement"
+import AssignmentSubmissionsView from "./professor/assignment/AssignmentSubmissionsView"
 
 const API_BASE_URL = APP_CONFIG.API_BASE_URL
 
@@ -82,11 +82,12 @@ interface AssignmentSubmission {
         name: string
         email: string
     }
-    grade?: number
-    feedback?: string
+    grade: number | null
+    feedback: string
     status: "submitted" | "graded"
     createdAt: string
 }
+
 
 interface Attendance {
     _id: string
@@ -121,7 +122,6 @@ interface AttendanceStatus {
     [key: string]: "present" | "absent" | "excused"
 }
 
-
 export default function ProfessorDashboard({ userId }: { userId: string }) {
     const [activeTab, setActiveTab] = useState("home")
     const [selectedCourse, setSelectedCourse] = useState<Course | null>(null)
@@ -143,6 +143,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
     const [attendanceDate, setAttendanceDate] = useState(new Date().toISOString().split("T")[0])
     const [attendanceStatus, setAttendanceStatus] = useState<AttendanceStatus>({})
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
+    const [isSubmissionsViewVisible, setIsSubmissionsViewVisible] = useState(false)
 
     const [userData, setUserData] = useState<UserData | null>(null)
     const [courses, setCourses] = useState<Course[]>([])
@@ -151,7 +152,8 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
     const [submissions, setSubmissions] = useState<AssignmentSubmission[]>([])
     const [attendanceRecords, setAttendanceRecords] = useState<Attendance[]>([])
     const [marks, setMarks] = useState<Mark[]>([])
-    const[studentEmail, setStudentEmail]=useState("")
+    const [studentEmail, setStudentEmail] = useState("")
+
 
     const [isLoading, setIsLoading] = useState<boolean>(true)
     const [isOffline, setIsOffline] = useState(false)
@@ -224,14 +226,26 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     await AsyncStorage.setItem("professorDashboardCourses", JSON.stringify(coursesData))
 
                     // Get all students from these courses
-                    const allStudents: Student[] = []
-                    coursesData.forEach((course: Course) => {
-                        course.students.forEach((student) => {
-                            if (!allStudents.some((s) => s._id === student._id)) {
-                                allStudents.push(student)
+                    const allStudents: Student[] = [];
+                    for (const course of coursesData) {
+                        for (const student of course.students) {
+                            if (typeof student === "string") {
+                                // If it's a string, try to fetch the full student details
+                                const studentObj = await fetchStudentById(student);
+                                if (studentObj && !allStudents.some((s) => s._id === studentObj._id)) {
+                                    allStudents.push(studentObj);
+                                }
+                            } else {
+                                // student is already a full object
+                                if (!allStudents.some((s) => s._id === student._id)) {
+                                    allStudents.push(student);
+                                }
                             }
-                        })
-                    })
+                        }
+                    }
+                    setStudents(allStudents);
+
+
                     setStudents(allStudents)
                     await AsyncStorage.setItem("professorDashboardStudents", JSON.stringify(allStudents))
 
@@ -315,6 +329,24 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                             .catch(() => []),
                     )
 
+                    async function fetchStudentById(studentId: string): Promise<Student | null> {
+                        try {
+                            const res = await fetch(`${API_BASE_URL}/api/user/${studentId}`, {
+                                headers: { Authorization: `Bearer ${token}` }
+                            });
+                            if (res.ok) {
+                                return await res.json();
+                            } else {
+                                console.error(`Failed to fetch student ${studentId}`);
+                                return null;
+                            }
+                        } catch (error) {
+                            console.error(`Error fetching student ${studentId}:`, error);
+                            return null;
+                        }
+                    }
+
+
                     const marksResults = await Promise.all(marksPromises)
                     const allMarks = marksResults.flat()
                     setMarks(allMarks)
@@ -366,34 +398,34 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
     }, [authContext, router, userId, token])
 
     const handleGrantAccess = async () => {
-		if (!studentEmail) return alert("Enter student email");
+        if (!studentEmail) return alert("Enter student email");
 
-		try {
-			setIsLoading(true);
-			const response = await  fetch(`${API_BASE_URL}/api/user/grant-access`, {
-				method: "POST",
-				headers: {
-				"Content-Type": "application/json",
-			},
-				body: JSON.stringify({
-					professorEmail: authContext.user.email,
-					studentEmail: studentEmail,
-					grant: true,
-				}),
-			});
+        try {
+            setIsLoading(true);
+            const response = await fetch(`${API_BASE_URL}/api/user/grant-access`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({
+                    professorEmail: authContext?.user?.email,
+                    studentEmail: studentEmail,
+                    grant: true,
+                }),
+            });
 
-		if (!response.ok) throw new Error("Access grant failed");
+            if (!response.ok) throw new Error("Access grant failed");
 
-		alert("Access granted!");
-		setStudentEmail("");
-	}
-       catch (err) {
-		console.error(err);
-		alert("Failed to grant access.");
-	} finally {
-		setIsLoading(false);
-	}
-};
+            alert("Access granted!");
+            setStudentEmail("");
+        }
+        catch (err) {
+            console.error(err);
+            alert("Failed to grant access.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleLogout = async () => {
         try {
@@ -403,7 +435,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
             console.error("Logout error:", error)
         }
     }
-    
+
     const handleCreateAssignment = async () => {
         if (!newAssignment.title || !newAssignment.description || !newAssignment.dueDate || !newAssignment.courseId) {
             Alert.alert("Error", "Please fill in all fields")
@@ -629,6 +661,32 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
         })
     }
 
+    // Get student submissions for a specific assignment
+    const getStudentSubmissionsForAssignment = (studentId: string, assignmentId: string) => {
+        return submissions.filter(
+            (submission) => submission.uploader._id === studentId && submission.assignmentId === assignmentId,
+        )
+    }
+
+    // Get all submissions for a student
+    const getStudentSubmissions = (studentId: string) => {
+        return submissions.filter((submission) => submission.uploader._id === studentId)
+    }
+
+    // Handle opening the submissions view for an assignment
+    const handleViewAssignmentSubmissions = (assignment: Assignment) => {
+        setSelectedAssignment(assignment)
+        setIsSubmissionsViewVisible(true)
+    }
+
+    // Handle submission graded callback from AssignmentSubmissionsView
+    const handleSubmissionGraded = (updatedSubmission: AssignmentSubmission) => {
+        // Update the submissions list with the newly graded submission
+        const updatedSubmissions = submissions.map((sub) => (sub._id === updatedSubmission._id ? updatedSubmission : sub))
+        setSubmissions(updatedSubmissions)
+        AsyncStorage.setItem("professorDashboardSubmissions", JSON.stringify(updatedSubmissions))
+    }
+
     if (isLoading) {
         return (
             <SafeAreaView style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
@@ -655,7 +713,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     style={[styles.sidebarItem, activeTab === "home" && styles.sidebarItemActive]}
                     onPress={() => setActiveTab("home")}
                 >
-                    <Ionicons name="home" size={24} color={activeTab === "home" ? "#5c51f3" : "#777"} />
+                    <Ionicons name="home" size={24} color={activeTab === "home" ? "#a9a4ff" : "#b2bfd9"} />
                     {!isSidebarCollapsed && (
                         <Text style={[styles.sidebarItemText, activeTab === "home" && styles.sidebarItemTextActive]}>
                             Dashboard
@@ -667,7 +725,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     style={[styles.sidebarItem, activeTab === "courses" && styles.sidebarItemActive]}
                     onPress={() => setActiveTab("courses")}
                 >
-                    <MaterialIcons name="library-books" size={24} color={activeTab === "courses" ? "#5c51f3" : "#777"} />
+                    <MaterialIcons name="library-books" size={24} color={activeTab === "courses" ? "#a9a4ff" : "#b2bfd9"} />
                     {!isSidebarCollapsed && (
                         <Text style={[styles.sidebarItemText, activeTab === "courses" && styles.sidebarItemTextActive]}>
                             Courses
@@ -679,7 +737,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     style={[styles.sidebarItem, activeTab === "attendance" && styles.sidebarItemActive]}
                     onPress={() => setActiveTab("attendance")}
                 >
-                    <MaterialIcons name="date-range" size={24} color={activeTab === "attendance" ? "#5c51f3" : "#777"} />
+                    <MaterialIcons name="date-range" size={24} color={activeTab === "attendance" ? "#a9a4ff" : "#b2bfd9"} />
                     {!isSidebarCollapsed && (
                         <Text style={[styles.sidebarItemText, activeTab === "attendance" && styles.sidebarItemTextActive]}>
                             Attendance
@@ -691,7 +749,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     style={[styles.sidebarItem, activeTab === "grading" && styles.sidebarItemActive]}
                     onPress={() => setActiveTab("grading")}
                 >
-                    <MaterialIcons name="grading" size={24} color={activeTab === "grading" ? "#5c51f3" : "#777"} />
+                    <MaterialIcons name="grading" size={24} color={activeTab === "grading" ? "#a9a4ff" : "#b2bfd9"} />
                     {!isSidebarCollapsed && (
                         <Text style={[styles.sidebarItemText, activeTab === "grading" && styles.sidebarItemTextActive]}>
                             Grading
@@ -699,33 +757,23 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     )}
                 </TouchableOpacity>
 
-                <TouchableOpacity
+                {/* <TouchableOpacity
                     style={[styles.sidebarItem, activeTab === "students" && styles.sidebarItemActive]}
                     onPress={() => setActiveTab("students")}
                 >
-                    <Ionicons name="people" size={24} color={activeTab === "students" ? "#5c51f3" : "#777"} />
+                    <Ionicons name="people" size={24} color={activeTab === "students" ? "#a9a4ff" : "#b2bfd9"} />
                     {!isSidebarCollapsed && (
                         <Text style={[styles.sidebarItemText, activeTab === "students" && styles.sidebarItemTextActive]}>
                             Students
                         </Text>
                     )}
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={[styles.sidebarItem, activeTab === "files" && styles.sidebarItemActive]}
-                    onPress={() => setActiveTab("files")}
-                >
-                    <MaterialIcons name="folder" size={24} color={activeTab === "files" ? "#5c51f3" : "#777"} />
-                    {!isSidebarCollapsed && (
-                        <Text style={[styles.sidebarItemText, activeTab === "files" && styles.sidebarItemTextActive]}>Files</Text>
-                    )}
-                </TouchableOpacity>
+                </TouchableOpacity> */}
 
                 <TouchableOpacity
                     style={[styles.sidebarItem, activeTab === "quizzes" && styles.sidebarItemActive]}
                     onPress={() => setActiveTab("quizzes")}
                 >
-                    <MaterialIcons name="quiz" size={24} color={activeTab === "quizzes" ? "#5c51f3" : "#777"} />
+                    <MaterialIcons name="quiz" size={24} color={activeTab === "quizzes" ? "#a9a4ff" : "#b2bfd9"} />
                     {!isSidebarCollapsed && (
                         <Text style={[styles.sidebarItemText, activeTab === "quizzes" && styles.sidebarItemTextActive]}>
                             Quizzes
@@ -773,24 +821,26 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     </View>
                 </View>
             </View>
+{/* 
             <View style={styles.sectionContainer}>
-			<Text style={styles.sectionTitle}>Grant Attendance Access</Text>
+                <Text style={styles.sectionTitle}>Grant Attendance Access</Text>
 
-			<View style={{ flexDirection: "row", alignItems: "center", marginTop: 10 }}>
-				<TextInput
-					style={[styles.textInput, { flex: 1, marginRight: 10 }]}
-					placeholder="Enter student email"
-					value={studentEmail}
-					onChangeText={setStudentEmail}
-				/>
-				<TouchableOpacity
-					style={styles.submitButton}
-					onPress={handleGrantAccess}
-				>
-					<Text style={styles.submitButtonText}>Grant</Text>
-				</TouchableOpacity>
-			</View>
-		</View>
+                <View style={styles.inputContainer}>
+                    <TextInput
+                        style={styles.textInput}
+                        placeholder="Enter student email"
+                        value={studentEmail}
+                        onChangeText={setStudentEmail}
+                        placeholderTextColor="#999"
+                    />
+                    <TouchableOpacity
+                        style={styles.grantButton}
+                        onPress={handleGrantAccess}
+                    >
+                        <Text style={styles.grantButtonText}>Grant</Text>
+                    </TouchableOpacity>
+                </View>
+            </View> */}
 
             {/* Charts Section */}
             <View style={[styles.sectionContainer, isDesktop && styles.desktopSectionContainer]}>
@@ -813,55 +863,22 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                 </View>
             </View>
 
-            {/* Content Grid for Desktop */}
-            {isDesktop ? (
-                <View style={styles.desktopContentGrid}>
-                    <View style={styles.desktopContentColumn}>
-                        <CourseList
-                            courses={courses}
-                            onCourseSelect={(course) => {
-                                setSelectedCourse(course)
-                                setActiveTab("courses")
-                            }}
-                        />
-                    </View>
-                    <View style={styles.desktopContentColumn}>
-                        <AssignmentList
-                            pendingAssignments={getPendingAssignments()}
-                            submissions={submissions}
-                            onGradeAssignment={(assignment, submission) => {
-                                setSelectedAssignment(assignment)
-                                setSelectedSubmission(submission)
-                                setIsGradingModalVisible(true)
-                            }}
-                            onCreateAssignment={() => setIsAssignmentModalVisible(true)}
-                        />
-                    </View>
-                </View>
-            ) : (
-                <>
-                    {/* Courses Section */}
-                    <CourseList
-                        courses={courses}
-                        onCourseSelect={(course) => {
-                            setSelectedCourse(course)
-                            setActiveTab("courses")
-                        }}
-                    />
-
-                    {/* Pending Assignments Section */}
-                    <AssignmentList
-                        pendingAssignments={getPendingAssignments()}
-                        submissions={submissions}
-                        onGradeAssignment={(assignment, submission) => {
-                            setSelectedAssignment(assignment)
-                            setSelectedSubmission(submission)
-                            setIsGradingModalVisible(true)
-                        }}
-                        onCreateAssignment={() => setIsAssignmentModalVisible(true)}
-                    />
-                </>
-            )}
+            {/* Pending Assignments Section */}
+            <View style={[styles.sectionContainer, isDesktop && styles.desktopSectionContainer]}>
+                <AssignmentList
+                    pendingAssignments={getPendingAssignments()}
+                    submissions={submissions}
+                    onGradeAssignment={(assignment, submission) => {
+                        setSelectedAssignment(assignment)
+                        setSelectedSubmission(submission)
+                        setIsGradingModalVisible(true)
+                    }}
+                    onCreateAssignment={() => setIsAssignmentModalVisible(true)}
+                    title="Assignments Needing Grading"
+                    userId={userId}
+                    role="professor"
+                />
+            </View>
         </>
     )
 
@@ -983,9 +1000,11 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
         <>
             <AttendanceManagement
                 courses={courses}
+                students={students}  // Pass the full students array here
                 isDesktop={isDesktop}
                 onError={(message) => Alert.alert("Error", message)}
             />
+
         </>
     )
 
@@ -1067,6 +1086,14 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                                             </TouchableOpacity>
                                         ))}
                                     </View>
+
+                                    <TouchableOpacity
+                                        style={styles.viewAllButton}
+                                        onPress={() => handleViewAssignmentSubmissions(assignment)}
+                                    >
+                                        <Text style={styles.viewAllButtonText}>View All Submissions</Text>
+                                        <MaterialIcons name="chevron-right" size={18} color="#4252e5" />
+                                    </TouchableOpacity>
                                 </View>
                             )
                         })}
@@ -1115,190 +1142,6 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
         </>
     )
 
-    const renderStudentsTab = () => (
-        <>
-            <View style={styles.tabHeader}>
-                <Text style={styles.tabTitle}>Student Management</Text>
-            </View>
-            <View style={[styles.tabContent, isDesktop && styles.desktopTabContent]}>
-                {selectedStudent ? (
-                    <View style={styles.studentProfileContainer}>
-                        <TouchableOpacity style={styles.backButton} onPress={() => setSelectedStudent(null)}>
-                            <Ionicons name="arrow-back" size={24} color="#4252e5" />
-                            <Text style={styles.backButtonText}>Back to Students</Text>
-                        </TouchableOpacity>
-
-                        <View style={[styles.studentProfileHeader, isDesktop && styles.desktopStudentProfileHeader]}>
-                            <View style={styles.studentProfileAvatar}>
-                                <Ionicons name="person" size={40} color="white" />
-                            </View>
-                            <View style={styles.studentProfileInfo}>
-                                <Text style={styles.studentProfileName}>{selectedStudent.name}</Text>
-                                <Text style={styles.studentProfileEmail}>{selectedStudent.email}</Text>
-                                <Text style={styles.studentProfileProgram}>
-                                    {selectedStudent.program || "Program not specified"} • Year {selectedStudent.year || "Unknown"}
-                                </Text>
-                            </View>
-                        </View>
-
-                        <View style={[styles.studentStatsContainer, isDesktop && styles.desktopStudentStatsContainer]}>
-                            <View style={styles.studentStat}>
-                                <Text style={styles.studentStatValue}>
-                                    {(() => {
-                                        const studentAttendance = attendanceRecords.filter(
-                                            (record) => record.studentId === selectedStudent._id,
-                                        )
-                                        if (studentAttendance.length === 0) return "N/A"
-                                        const presentCount = studentAttendance.filter(
-                                            (record) => record.status === "present" || record.status === "excused",
-                                        ).length
-                                        return `${Math.round((presentCount / studentAttendance.length) * 100)}%`
-                                    })()}
-                                </Text>
-                                <Text style={styles.studentStatLabel}>Attendance</Text>
-                            </View>
-                            <View style={styles.studentStat}>
-                                <Text style={styles.studentStatValue}>
-                                    {(() => {
-                                        const studentMarks = marks.filter((mark) => mark.studentId === selectedStudent._id)
-                                        if (studentMarks.length === 0) return "N/A"
-                                        const totalPercentage = studentMarks.reduce(
-                                            (sum, mark) => sum + (mark.score / mark.maxScore) * 100,
-                                            0,
-                                        )
-                                        return `${Math.round(totalPercentage / studentMarks.length)}%`
-                                    })()}
-                                </Text>
-                                <Text style={styles.studentStatLabel}>Average Grade</Text>
-                            </View>
-                            <View style={styles.studentStat}>
-                                <Text style={styles.studentStatValue}>
-                                    {submissions.filter((sub) => sub.uploader._id === selectedStudent._id).length}
-                                </Text>
-                                <Text style={styles.studentStatLabel}>Submissions</Text>
-                            </View>
-                        </View>
-
-                        <View style={styles.studentTabsContainer}>
-                            <TouchableOpacity style={[styles.studentTab, { borderBottomWidth: 2, borderBottomColor: "#4252e5" }]}>
-                                <Text style={[styles.studentTabText, { color: "#4252e5" }]}>Grades</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.studentTab}>
-                                <Text style={styles.studentTabText}>Attendance</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.studentTab}>
-                                <Text style={styles.studentTabText}>Submissions</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        <Text style={styles.sectionTitle}>Assignment Grades</Text>
-
-                        <View style={isDesktop ? styles.desktopGradesGrid : null}>
-                            {marks.filter((mark) => mark.studentId === selectedStudent._id).length > 0 ? (
-                                marks
-                                    .filter((mark) => mark.studentId === selectedStudent._id)
-                                    .map((mark) => {
-                                        const course = courses.find((c) => c._id === mark.courseId)
-
-                                        return (
-                                            <View key={mark._id} style={[styles.gradeItem, isDesktop && styles.desktopGradeItem]}>
-                                                <View style={styles.gradeItemInfo}>
-                                                    <Text style={styles.gradeItemTitle}>{mark.title}</Text>
-                                                    <View style={[styles.courseTag, { backgroundColor: course?.color || "#5c51f3" }]}>
-                                                        <Text style={styles.courseTagText}>{course?.code || "Unknown"}</Text>
-                                                    </View>
-                                                    <Text style={styles.gradeItemType}>
-                                                        {mark.type.charAt(0).toUpperCase() + mark.type.slice(1)}
-                                                    </Text>
-                                                </View>
-                                                <View style={styles.gradeScore}>
-                                                    <Text
-                                                        style={[
-                                                            styles.gradeScoreText,
-                                                            mark.score / mark.maxScore >= 0.9
-                                                                ? styles.gradeScoreA
-                                                                : mark.score / mark.maxScore >= 0.8
-                                                                    ? styles.gradeScoreB
-                                                                    : mark.score / mark.maxScore >= 0.7
-                                                                        ? styles.gradeScoreC
-                                                                        : mark.score / mark.maxScore >= 0.6
-                                                                            ? styles.gradeScoreD
-                                                                            : styles.gradeScoreF,
-                                                        ]}
-                                                    >
-                                                        {mark.score}/{mark.maxScore}
-                                                    </Text>
-                                                    <Text style={styles.gradePercentage}>{Math.round((mark.score / mark.maxScore) * 100)}%</Text>
-                                                </View>
-                                            </View>
-                                        )
-                                    })
-                            ) : (
-                                <View style={styles.emptyGrades}>
-                                    <Text style={styles.emptyGradesText}>No grades recorded for this student yet.</Text>
-                                </View>
-                            )}
-                        </View>
-                    </View>
-                ) : (
-                    <>
-                        <View style={styles.studentFilters}>
-                            <TouchableOpacity style={[styles.filterButton, styles.activeFilter]}>
-                                <Text style={styles.activeFilterText}>All Students</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.filterButton}>
-                                <Text style={styles.filterText}>By Course</Text>
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.filterButton}>
-                                <Text style={styles.filterText}>By Program</Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        <TextInput style={styles.searchInput} placeholder="Search students by name or email" />
-
-                        <View style={isDesktop ? styles.desktopStudentsGrid : null}>
-                            {students.map((student) => (
-                                <TouchableOpacity
-                                    key={student._id}
-                                    style={[styles.studentCard, isDesktop && styles.desktopStudentCard]}
-                                    onPress={() => setSelectedStudent(student)}
-                                >
-                                    <View style={styles.studentCardHeader}>
-                                        <View style={styles.studentAvatar}>
-                                            <Ionicons name="person" size={24} color="white" />
-                                        </View>
-                                        <View style={styles.studentCardInfo}>
-                                            <Text style={styles.studentCardName}>{student.name}</Text>
-                                            <Text style={styles.studentCardEmail}>{student.email}</Text>
-                                        </View>
-                                    </View>
-                                    <View style={styles.studentCardCourses}>
-                                        {courses
-                                            .filter((course) => course.students.some((s) => s._id === student._id))
-                                            .slice(0, 3)
-                                            .map((course) => (
-                                                <View key={course._id} style={[styles.studentCourseBadge, { backgroundColor: course.color }]}>
-                                                    <Text style={styles.studentCourseBadgeText}>{course.code}</Text>
-                                                </View>
-                                            ))}
-                                        {courses.filter((course) => course.students.some((s) => s._id === student._id)).length > 3 && (
-                                            <View style={styles.moreCoursesBadge}>
-                                                <Text style={styles.moreCoursesBadgeText}>
-                                                    +{courses.filter((course) => course.students.some((s) => s._id === student._id)).length - 3}
-                                                </Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                    <Ionicons name="chevron-forward" size={24} color="#ccc" />
-                                </TouchableOpacity>
-                            ))}
-                        </View>
-                    </>
-                )}
-            </View>
-        </>
-    )
-
     return (
         <SafeAreaView style={styles.container}>
             {isOffline && (
@@ -1329,9 +1172,7 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                                         ? "Attendance"
                                         : activeTab === "grading"
                                             ? "Grading"
-                                            : activeTab === "students"
-                                                ? "Students"
-                                                : activeTab === "files"
+                                            : activeTab === "files"
                                                     ? "Files"
                                                     : activeTab === "quizzes"
                                                         ? "Quizzes"
@@ -1376,18 +1217,28 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
 
                 {/* Main Content */}
                 <View style={[styles.mainContent, isDesktop && styles.desktopMainContent]}>
-                    <ScrollView
-                        style={styles.scrollView}
-                        contentContainerStyle={isDesktop ? styles.desktopScrollViewContent : null}
-                    >
-                        {activeTab === "home" && renderHomeTab()}
-                        {activeTab === "courses" && renderCoursesTab()}
-                        {activeTab === "attendance" && renderAttendanceTab()}
-                        {activeTab === "grading" && renderGradingTab()}
-                        {activeTab === "students" && renderStudentsTab()}
-                        {activeTab === "files" && <FileManagement />}
-                        {activeTab === "quizzes" && <QuizTab />}
-                    </ScrollView>
+                    {isSubmissionsViewVisible ? (
+                        <AssignmentSubmissionsView
+                            selectedAssignment={selectedAssignment}
+                            onClose={() => setIsSubmissionsViewVisible(false)}
+                            token={token}
+                            onGradeSubmitted={handleSubmissionGraded}
+                            courses={courses}
+                            marks={marks}
+                            setMarks={setMarks}
+                        />
+                    ) : (
+                        <ScrollView
+                            style={styles.scrollView}
+                            contentContainerStyle={isDesktop ? styles.desktopScrollViewContent : null}
+                        >
+                            {activeTab === "home" && renderHomeTab()}
+                            {activeTab === "courses" && renderCoursesTab()}
+                            {activeTab === "attendance" && renderAttendanceTab()}
+                            {activeTab === "grading" && renderGradingTab()}
+                            {activeTab === "quizzes" && <QuizTab />}
+                        </ScrollView>
+                    )}
                 </View>
             </View>
 
@@ -1452,7 +1303,15 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
 
                                     <Text style={styles.gradingStudentName}>Student: {selectedSubmission.uploader.name}</Text>
 
-                                    <TouchableOpacity style={styles.viewSubmissionButton}>
+                                    <TouchableOpacity
+                                        style={styles.viewSubmissionButton}
+                                        onPress={() => {
+                                            Linking.openURL(selectedSubmission.downloadUrl).catch((err) => {
+                                                console.error("Error opening URL:", err)
+                                                Alert.alert("Error", "Could not open the submission file")
+                                            })
+                                        }}
+                                    >
                                         <Feather name="download" size={20} color="white" />
                                         <Text style={styles.viewSubmissionButtonText}>View Submission</Text>
                                     </TouchableOpacity>
@@ -1489,7 +1348,6 @@ export default function ProfessorDashboard({ userId }: { userId: string }) {
                     </View>
                 </View>
             </Modal>
-
         </SafeAreaView>
     )
 }
