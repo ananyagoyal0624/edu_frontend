@@ -24,7 +24,8 @@ import { AuthContext } from "./context/AuthContext"
 import { APP_CONFIG } from "@/app-config"
 
 const LOCAL_CHATBOT_URL = APP_CONFIG.LOCAL_CHATBOT_URL;
-const DEPLOYED_CHATBOT_URL = APP_CONFIG.DEPLOYED_CHATBOT_URL;
+const DEPLOYED_CHATBOT_URL = APP_CONFIG.API_CHATBOT_URL;
+
 
 interface ScrollableChipsProps {
     suggestions: string[]
