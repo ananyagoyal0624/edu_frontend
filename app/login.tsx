@@ -220,33 +220,12 @@ export default function LoginScreen() {
 
 
   useEffect(() => {
-    if (!user || !user.token || isRedirecting) return;
-  
-    let dynamicPath = `/${user.role}/${user.userId}`;
-  
-    if (user.role === "student" && user.hasAccess) {
-      // student with temporary access → redirect to static attendance screen
-      dynamicPath = "/AttendanceAccessScreen";
+    if (user && !isRedirecting) {
+      setIsRedirecting(true);
+      console.log(`User detected (${user.role}), navigating to dashboard...`);
+      router.replace(`/${user.role}/${user.userId}` as never);
     }
-    console.log("🔍 User before redirecting:", user);
-
-    setIsRedirecting(true);
-  
-    if (Platform.OS === "web") {
-      console.log("🌐 Redirecting to:", dynamicPath);
-      window.location.href = dynamicPath;
-      return;
-    }
-  
-    if (typeof router.replace === "function") {
-      console.log("📱 Navigating to:", dynamicPath);
-      router.replace(dynamicPath as never);
-    } else {
-      console.warn("⚠️ router.replace is not available");
-    }
-  }, [user, isRedirecting, router]);
-  
-
+  }, [user, isRedirecting]);
 
 
   useEffect(() => {
