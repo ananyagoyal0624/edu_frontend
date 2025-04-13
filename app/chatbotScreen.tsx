@@ -131,27 +131,34 @@ const ChatbotScreen = () => {
 
 
     
-    const fetchBotResponse = async (email:string, query: string): Promise<string> => {
-        try {
-            const response = await fetch(`${DEPLOYED_CHATBOT_URL}/ask`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ email, query }),
-            });
+    const fetchBotResponse = async (email: string, query: string): Promise<string> => {
+    try {
+        const response = await fetch(`${DEPLOYED_CHATBOT_URL}/ask`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ email, query }),
+        });
 
-            if (!response.ok) {
-                throw new Error(`Server error: ${response.status}`);
-            }
-
-            const data = await response.json();
-            return data.answer;
-        } catch (error) {
-            console.error('Error fetching bot response:', error);
-            return "I'm sorry, I couldn't process your request.";
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
         }
-    };
+
+        const text = await response.text();  // Get raw response
+        if (!text) {
+            console.error("Empty response body received from chatbot API");
+            return "Sorry, I didn't get a response.";
+        }
+
+        const data = JSON.parse(text);       // Then parse manually
+        return data.answer || "Sorry, no answer received.";
+    } catch (error) {
+        console.error('Error fetching bot response:', error);
+        return "I'm sorry, I couldn't process your request.";
+    }
+};
+
 
 
     const sendMessage = async () => {
